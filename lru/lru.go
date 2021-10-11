@@ -17,7 +17,10 @@ limitations under the License.
 // Package lru implements an LRU cache.
 package lru
 
-import "container/list"
+import (
+	"container/list"
+	"time"
+)
 
 // Cache is an LRU cache. It is not safe for concurrent access.
 type Cache struct {
@@ -28,6 +31,7 @@ type Cache struct {
 	// OnEvicted optionally specifies a callback function to be
 	// executed when an entry is purged from the cache.
 	OnEvicted func(key Key, value interface{})
+	OnExpired func(key Key, value interface{}) (Key, interface{})
 
 	ll    *list.List
 	cache map[interface{}]*list.Element
@@ -37,8 +41,9 @@ type Cache struct {
 type Key interface{}
 
 type entry struct {
-	key   Key
-	value interface{}
+	key      Key
+	value    interface{}
+	validFor time.Duration
 }
 
 // New creates a new Cache.
@@ -53,17 +58,25 @@ func New(maxEntries int) *Cache {
 }
 
 // Add adds a value to the cache.
-func (c *Cache) Add(key Key, value interface{}) {
+func (c *Cache) Add(key Key, value interface{}, validFor time.Duration) {
 	if c.cache == nil {
 		c.cache = make(map[interface{}]*list.Element)
 		c.ll = list.New()
+	}
+	// if we have a non-zero duration, we'll schedule an expiry
+	if validFor != 0 {
+		// schedule expiration of this key
+		go func() {
+			time.Sleep(validFor)
+			c.removeWithExpiry(key)
+		}()
 	}
 	if ee, ok := c.cache[key]; ok {
 		c.ll.MoveToFront(ee)
 		ee.Value.(*entry).value = value
 		return
 	}
-	ele := c.ll.PushFront(&entry{key, value})
+	ele := c.ll.PushFront(&entry{key: key, value: value, validFor: validFor})
 	c.cache[key] = ele
 	if c.MaxEntries != 0 && c.ll.Len() > c.MaxEntries {
 		c.RemoveOldest()
@@ -83,13 +96,40 @@ func (c *Cache) Get(key Key) (value interface{}, ok bool) {
 }
 
 // Remove removes the provided key from the cache.
+// removal happens even if the key has a valid ttl remaining
 func (c *Cache) Remove(key Key) {
 	if c.cache == nil {
 		return
 	}
-	if ele, hit := c.cache[key]; hit {
-		c.removeElement(ele)
+	ele, hit := c.cache[key]
+	if !hit {
+		return
 	}
+	c.removeElement(ele)
+}
+
+// removeWithExpiry removes the provided key from the cache
+// based on the result of calling OnExpired.  If the return values
+// are nil, we will remove it from the cache. If non-nil, we will
+// update the cache with the provided values
+func (c *Cache) removeWithExpiry(key Key) {
+	if c.cache == nil {
+		return
+	}
+	ele, hit := c.cache[key]
+	if !hit {
+		return
+	}
+	if c.OnExpired != nil {
+		kv := ele.Value.(*entry)
+		k, v := c.OnExpired(kv.key, kv.value)
+		if k != nil && v != nil {
+			c.Add(k, v, kv.validFor)
+			return
+		}
+	}
+	// default remove
+	c.removeElement(ele)
 }
 
 // RemoveOldest removes the oldest item from the cache.

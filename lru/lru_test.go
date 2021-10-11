@@ -19,6 +19,7 @@ package lru
 import (
 	"fmt"
 	"testing"
+	"time"
 )
 
 type simpleStruct struct {
@@ -36,19 +37,20 @@ var getTests = []struct {
 	keyToAdd   interface{}
 	keyToGet   interface{}
 	expectedOk bool
+	refreshCnt int
 }{
-	{"string_hit", "myKey", "myKey", true},
-	{"string_miss", "myKey", "nonsense", false},
-	{"simple_struct_hit", simpleStruct{1, "two"}, simpleStruct{1, "two"}, true},
-	{"simple_struct_miss", simpleStruct{1, "two"}, simpleStruct{0, "noway"}, false},
+	{"string_hit", "myKey10", "myKey10", true, 0},
+	{"string_miss", "myKey20", "nonsense", false, 0},
+	{"simple_struct_hit", simpleStruct{1, "two"}, simpleStruct{1, "two"}, true, 0},
+	{"simple_struct_miss", simpleStruct{1, "two"}, simpleStruct{0, "noway"}, false, 0},
 	{"complex_struct_hit", complexStruct{1, simpleStruct{2, "three"}},
-		complexStruct{1, simpleStruct{2, "three"}}, true},
+		complexStruct{1, simpleStruct{2, "three"}}, true, 0},
 }
 
 func TestGet(t *testing.T) {
 	for _, tt := range getTests {
 		lru := New(0)
-		lru.Add(tt.keyToAdd, 1234)
+		lru.Add(tt.keyToAdd, 1234, 0)
 		val, ok := lru.Get(tt.keyToGet)
 		if ok != tt.expectedOk {
 			t.Fatalf("%s: cache hit = %v; want %v", tt.name, ok, !ok)
@@ -60,7 +62,7 @@ func TestGet(t *testing.T) {
 
 func TestRemove(t *testing.T) {
 	lru := New(0)
-	lru.Add("myKey", 1234)
+	lru.Add("myKey", 1234, 0)
 	if val, ok := lru.Get("myKey"); !ok {
 		t.Fatal("TestRemove returned no match")
 	} else if val != 1234 {
@@ -82,7 +84,7 @@ func TestEvict(t *testing.T) {
 	lru := New(20)
 	lru.OnEvicted = onEvictedFun
 	for i := 0; i < 22; i++ {
-		lru.Add(fmt.Sprintf("myKey%d", i), 1234)
+		lru.Add(fmt.Sprintf("myKey%d", i), 1234, 0)
 	}
 
 	if len(evictedKeys) != 2 {
@@ -93,5 +95,48 @@ func TestEvict(t *testing.T) {
 	}
 	if evictedKeys[1] != Key("myKey1") {
 		t.Fatalf("got %v in second evicted key; want %s", evictedKeys[1], "myKey1")
+	}
+}
+
+func TestGetValidity(t *testing.T) {
+	onExpiredFun := func(key Key, value interface{}) (Key, interface{}) {
+		switch key {
+		case "myKey10", "myKey20":
+			return key, value
+		}
+		return nil, nil
+	}
+
+	lru := New(0)
+	lru.OnExpired = onExpiredFun
+	for _, tt := range getTests {
+		switch tt.keyToAdd {
+		case "myKey10", "myKey20":
+			lru.Add(tt.keyToAdd, 1234, 500*time.Millisecond)
+		default:
+			lru.Add(tt.keyToAdd, 1234, 0)
+		}
+	}
+	// wait for our two keys above to expire out
+	time.Sleep(2 * time.Second)
+	cacheLen := lru.Len()
+	if cacheLen != 4 {
+		t.Fatalf("lru size wrong, too many keys expired; want 3 items in lru, got %v", cacheLen)
+	}
+	// remove the autorefreshed keys now
+	lru.Remove("myKey10")
+	lru.Remove("myKey20")
+	for _, tt := range getTests {
+		_, ok := lru.Get(tt.keyToGet)
+		switch tt.keyToAdd {
+		case "myKey10", "myKey20":
+			if ok {
+				t.Fatalf("%v should have expired, but remains", tt.keyToGet)
+			}
+		default:
+			if ok != tt.expectedOk {
+				t.Fatalf("%s:%v cache hit = %v; want %v", tt.name, tt.keyToGet, ok, !ok)
+			}
+		}
 	}
 }

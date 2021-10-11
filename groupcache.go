@@ -32,9 +32,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	pb "github.com/golang/groupcache/groupcachepb"
-	"github.com/golang/groupcache/lru"
-	"github.com/golang/groupcache/singleflight"
+	pb "github.com/sneakywombat/groupcache/groupcachepb"
+	"github.com/sneakywombat/groupcache/lru"
+	"github.com/sneakywombat/groupcache/singleflight"
 )
 
 // A Getter loads data for a key.
