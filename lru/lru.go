@@ -101,11 +101,9 @@ func (c *Cache) Remove(key Key) {
 	if c.cache == nil {
 		return
 	}
-	ele, hit := c.cache[key]
-	if !hit {
-		return
+	if ele, hit := c.cache[key]; hit {
+		c.removeElement(ele)
 	}
-	c.removeElement(ele)
 }
 
 // removeWithExpiry removes the provided key from the cache

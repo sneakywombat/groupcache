@@ -121,7 +121,7 @@ func TestGetValidity(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	cacheLen := lru.Len()
 	if cacheLen != 4 {
-		t.Fatalf("lru size wrong, too many keys expired; want 3 items in lru, got %v", cacheLen)
+		t.Fatalf("lru size wrong, too many keys expired; want 4 items in lru, got %v", cacheLen)
 	}
 	// remove the autorefreshed keys now
 	lru.Remove("myKey10")
